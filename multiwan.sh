@@ -1,38 +1,96 @@
 #!/usr/bin/env bash
 
-source /etc/multiwan.conf
+PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+
+readonly __BASENAME="$(basename "$0" .sh)"
+
+CONFIG="/etc/$__BASENAME.conf"
 
 STARTUP=1
 CHECK_INTERVAL=1
+LOG_FACILITY=local6
+LOG_PRIORITY=notice
 
-# IP address of each WAN interface
-WAN_NET1="$(ip addr show $WAN_IF1 | grep "inet " | tr -s [:space:] | cut -d ' ' -f3)"
-WAN_NET2="$(ip addr show $WAN_IF2 | grep "inet " | tr -s [:space:] | cut -d ' ' -f3)"
+declare -A WAN_IF
+declare -A WAN_GW
+declare -A WAN_TABLE
+declare -A WAN_WEIGHT
 
-WAN_IP1="$(echo $WAN_NET1 | cut -d '/' -f1)"
-WAN_IP2="$(echo $WAN_NET2 | cut -d '/' -f1)"
+declare -A WAN_IP # IP address of each WAN interface
+declare -A LLS # Last link status. Defaults to down to force check of both on first run.
+declare -A LPS # Last ping status.
+declare -A CPS # Current ping status.
+declare -A CLS # Change link status.
+declare -A CNT # Count of consecutive status checks
 
-# Last link status.  Defaults to down to force check of both on first run.
-LLS1=1
-LLS2=1
+while getopts ":c:" opt; do
+  case ${opt} in
+    c)
+      CONFIG=$OPTARG
+      ;;
+    \? )
+      >&2 echo "Invalid option: $OPTARG"
+      exit 1
+      ;;
+    : )
+      >&2 echo "Invalid option: $OPTARG requires an argument"
+      exit 1
+      ;;
+  esac
+done
+shift $((OPTIND -1))
 
-# Last ping status.
-LPS1=1
-LPS2=1
+if [ ! -f "$CONFIG" ]; then
+  >&2 echo "$CONFIG: no such file"
+  exit 1
+fi
 
-# Current ping status.
-CPS1=1
-CPS2=1
+# shellcheck source=/dev/null
+. "$CONFIG"
 
-# Change link status.
-CLS1=1
-CLS2=1
+for v in WAN_IF WAN_TABLE WAN_GW WAN_WEIGHT; do
+  for i in 1 2; do
+    var="${v}${i}"
+    val="${!var}"
 
-# Count of consecutive status checks
-COUNT1=0
-COUNT2=0
+    if [ -n "$val" ]; then
+      eval "${v}[$i]=$val"
+    fi
+  done
+done
 
-function link_status() {
+for i in "${!WAN_IF[@]}"; do
+  WAN_IP[$i]="$(ip addr show "${WAN_IF[$i]}" 2> /dev/null | awk '$1 == "inet" { gsub(/\/.*/, "", $2); print $2 }')"
+
+  if [ -z "${WAN_IF[$i]}" ] || [ -z "${WAN_TABLE[$i]}" ] || [ -z "${WAN_GW[$i]}" ] || [ -z "${WAN_IP[$i]}" ]; then
+    unset "WAN_IF[$i]"
+    continue
+  fi
+
+  LLS[$i]=1
+  LPS[$i]=1
+  CPS[$i]=1
+  CLS[$i]=1
+  CNT[$i]=0
+
+  if [ -z "${WAN_WEIGHT[$i]}" ]; then
+    WAN_WEIGHT[$i]=1
+  fi
+done
+
+now() {
+  date +"%a %b %d %T %Y"
+}
+
+log() {
+  if [ -n "$LOG_FILE" ]; then
+    echo -e "$(now): $__BASENAME: $*" | tee -a "$LOG_FILE" 1>&2
+  else
+    logger -p "$LOG_FACILITY.$LOG_PRIORITY" -t "${__BASENAME}[$$]" -s "$@"
+  fi
+}
+
+link_status() {
   case $1 in
     0)
       echo "Up" ;;
@@ -44,8 +102,8 @@ function link_status() {
 }
 
 # check_link $IP $TIMEOUT
-function check_link() {
-  ping -W $2 -I $1 -c 1 $PING_TARGET > /dev/null 2>&1
+check_link() {
+  ping -W "$2" -I "$1" -c 1 "$PING_TARGET" > /dev/null 2>&1
   RETVAL=$?
   if [ $RETVAL -ne 0 ] ; then
     STATE=1
@@ -59,78 +117,63 @@ function check_link() {
 }
 
 while : ; do
-  LINK_STATE="$(check_link $WAN_IP1 $PING_TIMEOUT)"
-  CPS1=$?
+  for i in "${!WAN_IF[@]}"; do
+    check_link "${WAN_IP[$i]}" "$PING_TIMEOUT"
+    CPS[$i]=$?
 
-  if [ $LPS1 -ne $CPS1 ] ; then
-    logger -p local6.notice -t MULTIWAN[$$] "Ping state changed for $WAN_TABLE1 from $(link_status $LPS1) to $(link_status $CPS1)"
-    COUNT1=1
-  else
-    if [ $LPS1 -ne $LLS1 ] ; then
-      COUNT1=`expr $COUNT1 + 1`
-    fi
-  fi
-
-  if [[ $COUNT1 -ge $SUCCESS_COUNT || ($LLS1 -eq 0 && $COUNT1 -ge $FAILURE_COUNT) ]]; then
-    CLS1=0
-    COUNT1=0
-
-    if [ $LLS1 -eq 1 ] ; then
-      LLS1=0
+    if [[ ${LPS[$i]} -ne ${CPS[$i]} ]] ; then
+      log "Ping state changed for ${WAN_TABLE[$i]} from $(link_status ${LPS[$i]}) to $(link_status ${CPS[$i]})"
+      CNT[$i]=1
     else
-      LLS1=1
+      if [[ ${LPS[$i]} -ne ${LLS[$i]} ]] ; then
+        CNT[$i]=$((CNT[i]+1))
+      fi
     fi
-    logger -p local6.notice -t MULTIWAN[$$] "Link state for $WAN_TABLE1 is $(link_status $LLS1)"
-  else
-    CLS1=1
-  fi
 
-  LPS1=$CPS1
+    if [[ ${CNT[$i]} -ge $SUCCESS_COUNT || (${LLS[$i]} -eq 0 && ${CNT[$i]} -ge $FAILURE_COUNT) ]]; then
+      CLS[$i]=0
+      CNT[$i]=0
 
-  LINK_STATE="$(check_link $WAN_IP2 $PING_TIMEOUT)"
-  CPS2=$?
-
-  if [ $LPS2 -ne $CPS2 ] ; then
-    logger -p local6.notice -t MULTIWAN[$$] "Ping state changed for $WAN_TABLE2 from $(link_status $LPS2) to $(link_status $CPS2)"
-    COUNT2=1
-  else
-    if [ $LPS2 -ne $LLS2 ] ; then
-      COUNT2=`expr $COUNT2 + 1`
-    fi
-  fi
-
-  if [[ $COUNT2 -ge $SUCCESS_COUNT || ($LLS2 -eq 0 && $COUNT2 -ge $FAILURE_COUNT) ]]; then
-    CLS2=0
-    COUNT2=0
-
-    if [ $LLS2 -eq 1 ]; then
-      LLS2=0
+      if [[ ${LLS[$i]} -eq 1 ]] ; then
+        LLS[$i]=0
+      else
+        LLS[$i]=1
+      fi
+      log "Link state for ${WAN_TABLE[$i]} is $(link_status ${LLS[$i]})"
     else
-      LLS2=1
+      CLS[$i]=1
     fi
-    logger -p local6.notice -t MULTIWAN[$$] "Link state for $WAN_TABLE2 is $(link_status $LLS2)"
-  else
-    CLS2=1
-  fi
 
-  LPS2=$CPS2
+    LPS[$i]=${CPS[$i]}
+  done
 
-  if [[ $CLS1 -eq 0 || $CLS2 -eq 0 ]] ; then
-    if [[ $STARTUP -eq 1 ]] ; then
-      STARTUP=0
-      CHECK_INTERVAL=15
+  for i in "${!CLS[@]}"; do
+    if [[ ${CLS[$i]} -eq 0 ]]; then
+      COMMAND=("ip route replace default scope global")
+
+      if [[ $STARTUP -eq 1 ]] ; then
+        STARTUP=0
+        CHECK_INTERVAL=15
+      fi
+
+      for j in "${!LLS[@]}"; do
+        if [[ ${LLS[$j]} -eq 0 ]]; then
+          COMMAND+=("nexthop via ${WAN_GW[$j]} dev ${WAN_IF[$j]} weight ${WAN_WEIGHT[$j]}")
+        fi
+      done
+
+      if [[ ${#COMMAND[@]} -gt 1 ]]; then
+        eval "${COMMAND[@]}"
+
+        if [ -n "$ON_CHANGE" ]; then
+          log "Run 'ON_CHANGE' command"
+          eval "$ON_CHANGE" 2>/dev/null || true
+        fi
+      fi
+
+      break
     fi
-    if [[ $LLS1 -eq 1 && $LLS2 -eq 0 ]] ; then
-      logger -p local6.notice -t MULTIWAN[$$] "Applying $WAN_TABLE2 only route."
-      ip route change default scope global via $WAN_GW2 dev $WAN_IF2
-    elif [[ $LLS1 -eq 0 && $LLS2 -eq 1 ]] ; then
-      logger -p local6.notice -t MULTIWAN[$$] "Applying $WAN_TABLE1 only route."
-      ip route change default scope global via $WAN_GW1 dev $WAN_IF1
-    elif [[ $LLS1 -eq 0 && $LLS2 -eq 0 ]] ; then
-      logger -p local6.notice -t MULTIWAN[$$] "Applying multiwan load balancing route."
-      ip route replace default scope global nexthop via $WAN_GW1 dev $WAN_IF1 weight $WAN_WEIGHT1 nexthop via $WAN_GW2 dev $WAN_IF2 weight $WAN_WEIGHT2
-    fi
-  fi
+  done
 
   sleep $CHECK_INTERVAL
 done
