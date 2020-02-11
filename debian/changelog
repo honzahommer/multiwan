@@ -1,3 +1,10 @@
+multiwan (2.0) unstable; urgency=log
+
+  * Unlimited wan connections. [\#1](https://github.com/honzahommer/multiwan/pull/1) ([honzahommer](https://github.com/honzahommer))
+  * CI. [\#2](https://github.com/honzahommer/multiwan/pull/2) ([honzahommer](https://github.com/honzahommer))
+
+ -- Honza Hommer <honza@hommer.cz>  Tue, 11 Feb 2020 17:01:44 +0100
+
 multiwan (1.0) unstable; urgency=low
 
   * Initial Release.
