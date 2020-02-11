@@ -42,28 +42,25 @@ Number of consecutive successful ping attempts before considering the link to be
 \fBFAILURE_COUNT\fP
 Number of consecutive failed ping attempts before considering the link to be \fIdown\fP.
 .TP
-\fBWAN_IF1\fP
-The interface name for the first external network connection.
+\fBWAN_IF[n]\fP
+The interface name for the n external network connection.
 .TP
-\fBWAN_IF2\fP
-The interface name for the second external network connection.
+\fBWAN_GW[n]\fP
+The gateway address to route traffic through the interface specified in \fIWAN_IF[n]\fP.
 .TP
-\fBWAN_GW1\fP
-The gateway address to route traffic through the interface specified in \fIWAN_IF1\fP.
+\fBWAN_TABLE[n]\fP
+The table name of the route for \fIWAN_IF[n]\fP to be utilized by \fIiproute2\fP.
 .TP
-\fBWAN_GW2\fP
-The gateway address to route traffic through the interface specified in \fIWAN_IF2\fP.
+\fBWAN_WEIGHT[n]\fP
+The route weight for the interface specified in \fIWAN_IF[n]\fP.
 .TP
-\fBWAN_TABLE1\fP
-The table name of the route for \fIWAN_IF1\fP to be utilized by \fIiproute2\fP.
+\fBLOG_FILE\fP
+Log to file instead of syslog\fP.
 .TP
-\fBWAN_TABLE2\fP
-The table name of the route for \fIWAN_IF2\fP to be utilized by \fIiproute2\fP.
+\fBLOG_FACILITY\fP
+Syslog facility, defaults to local6\fP.
 .TP
-\fBWAN_WEIGHT1\fP
-The route weight for the interface specified in \fIWAN_IF1\fP.
-.TP
-\fBWAN_WEIGHT2\fP
-The route weight for the interface specified in \fIWAN_IF2\fP.
+\fBLOG_PRIORITY\fP
+Syslog priority, defaults to notice\fP.
 .SH "SEE ALSO"
 multiwan(8), ip(8)

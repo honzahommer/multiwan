@@ -7,4 +7,5 @@
 #
 
 # Additional options that are passed to the Daemon.
+#DAEMON_OPTS="-c /path/to/config/file"
 DAEMON_OPTS=""
